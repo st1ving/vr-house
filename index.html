@@ -9,6 +9,7 @@
     body { overflow: hidden; background: #000; }
     canvas { display: block; }
 
+    /* 按钮 */
     .scene-btns {
       position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 12px; z-index: 10;
@@ -21,13 +22,13 @@
     }
     .scene-btn.active { background: #ff5a5f; border-color: #ff5a5f; }
 
+    /* 陀螺仪 */
     .gyro-tip {
       position: fixed; top: 20px; right: 20px; z-index: 10;
       color: #fff; font-size: 13px; background: rgba(0,0,0,0.6);
       padding: 6px 14px; border-radius: 20px; display: none;
     }
     .gyro-tip.show { display: block; }
-
     .auth-btn {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
       padding: 14px 30px; background: #ff5a5f; color: #fff; border: none;
@@ -35,15 +36,33 @@
     }
     .auth-btn.show { display: block; }
 
-    .loading {
-      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      color: #fff; font-size: 16px; z-index: 30;
+    /* 进度条遮罩 */
+    .loading-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100; transition: opacity 0.3s;
     }
-    .loading.hide { display: none; }
+    .loading-overlay.hide { opacity: 0; pointer-events: none; }
+    .loading-box { text-align: center; color: #fff; font-family: 'PingFang SC','Microsoft YaHei',sans-serif; }
+    .loading-text { font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+    .progress-bar {
+      width: 240px; height: 6px; background: rgba(255,255,255,0.2);
+      border-radius: 3px; overflow: hidden; margin: 0 auto;
+    }
+    .progress-fill {
+      height: 100%; background: linear-gradient(90deg, #ff5a5f, #ff8a5c);
+      border-radius: 3px; transition: width 0.25s ease; width: 0%;
+    }
   </style>
 </head>
 <body>
-  <div class="loading" id="loading">加载中...</div>
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-box">
+      <div class="loading-text" id="loadingText">加载中... 0%</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width: 0%"></div></div>
+    </div>
+  </div>
 
   <div class="scene-btns" id="sceneBtns">
     <button class="scene-btn active" data-scene="0">客厅</button>
@@ -51,62 +70,68 @@
     <button class="scene-btn" data-scene="2">阳台</button>
   </div>
 
-  <div class="gyro-tip" id="gyroTip">📱 陀螺仪已激活</div>
+  <div class="gyro-tip" id="gyroTip">陀螺仪已激活</div>
   <button class="auth-btn" id="authBtn">点击开启陀螺仪</button>
 
   <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-      }
-    }
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
   </script>
 
   <script type="module">
     import * as THREE from 'three';
 
-    // ==========================================
-    // 1. 场景数据配置（你的目录结构）
-    // ==========================================
-    const panoramaSets = [
-      {
-        name: '客厅',
-        faces: [
-          'src/image/livingRoom/living_r.jpg', // 右
-          'src/image/livingRoom/living_l.jpg', // 左
-          'src/image/livingRoom/living_u.jpg', // 上（天花板）
-          'src/image/livingRoom/living_d.jpg', // 下（地板）
-          'src/image/livingRoom/living_f.jpg', // 前
-          'src/image/livingRoom/living_b.jpg'  // 后
-        ]
-      },
-      {
-        name: '厨房',
-        faces: [
-          'src/image/kitchen/kitchen_r.jpg',
-          'src/image/kitchen/kitchen_l.jpg',
-          'src/image/kitchen/kitchen_u.jpg',
-          'src/image/kitchen/kitchen_d.jpg',
-          'src/image/kitchen/kitchen_f.jpg',
-          'src/image/kitchen/kitchen_b.jpg'
-        ]
-      },
-      {
-        name: '阳台',
-        faces: [
-          'src/image/balcony/balcony_r.jpg',
-          'src/image/balcony/balcony_l.jpg',
-          'src/image/balcony/balcony_u.jpg',
-          'src/image/balcony/balcony_d.jpg',
-          'src/image/balcony/balcony_f.jpg',
-          'src/image/balcony/balcony_b.jpg'
-        ]
-      }
-    ];
+    // ---------- 工具：生成纯色测试纹理----------
+    function createColorCubeTexture(colorHex) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64; canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = colorHex;
+      ctx.fillRect(0, 0, 64, 64);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(colorHex, 32, 32);
+      return canvas.toDataURL('image/png');
+    }
 
-    // ==========================================
-    // 2. 场景、相机、渲染器
-    // ==========================================
+    // ---------- 1. 场景数据 ----------
+const panoramaSets = [
+  {
+    name: '客厅',
+    faces: [
+      'src/image/livingRoom/living_r.jpg',
+      'src/image/livingRoom/living_l.jpg',
+      'src/image/livingRoom/living_u.jpg',
+      'src/image/livingRoom/living_d.jpg',
+      'src/image/livingRoom/living_f.jpg',
+      'src/image/livingRoom/living_b.jpg'
+    ]
+  },
+  {
+    name: '厨房',
+    faces: [
+      'src/image/kitchen/kitchen_r.jpg',
+      'src/image/kitchen/kitchen_l.jpg',
+      'src/image/kitchen/kitchen_u.jpg',
+      'src/image/kitchen/kitchen_d.jpg',
+      'src/image/kitchen/kitchen_f.jpg',
+      'src/image/kitchen/kitchen_b.jpg'
+    ]
+  },
+  {
+    name: '阳台',
+    faces: [
+      'src/image/balcony/balcony_r.jpg',
+      'src/image/balcony/balcony_l.jpg',
+      'src/image/balcony/balcony_u.jpg',
+      'src/image/balcony/balcony_d.jpg',
+      'src/image/balcony/balcony_f.jpg',
+      'src/image/balcony/balcony_b.jpg'
+    ]
+  }
+];
+    // ---------- 2. 初始化场景 ----------
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 0);
@@ -116,66 +141,81 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     document.body.appendChild(renderer.domElement);
 
-    // ==========================================
-    // 3. 创建立方体全景
-    // ==========================================
-function createPanorama(faceUrls) {
-  const loader = new THREE.TextureLoader();
-  const textures = faceUrls.map(url => loader.load(url));
+    // ---------- 3. 创建立方体全景（异步加载+进度条） ----------
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    const progressFill = document.getElementById('progressFill');
+    let isTransitioning = false;
 
-  const materials = textures.map(tex =>
-    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
-  );
+    function createPanorama(faceUrls) {
+      const loader = new THREE.TextureLoader();
+      const boxSize = 1000;
 
-  const geometry = new THREE.BoxGeometry(1000, 1000, 1000);
-  return new THREE.Mesh(geometry, materials);
-}
+      // 深灰占位方块
+      const placeholderColor = new THREE.Color(0x222222);
+      const placeholderMaterials = Array(6).fill(
+        new THREE.MeshBasicMaterial({ color: placeholderColor, side: THREE.BackSide })
+      );
+      const geometry = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+      const mesh = new THREE.Mesh(geometry, placeholderMaterials);
+
+      let loadedCount = 0;
+      faceUrls.forEach((url, index) => {
+        loader.load(
+          url,
+          (texture) => {
+            loadedCount++;
+            const percent = Math.round((loadedCount / 6) * 100);
+            if (loadingText) loadingText.textContent = `加载中... ${percent}%`;
+            if (progressFill) progressFill.style.width = `${percent}%`;
+
+            const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.BackSide });
+            mesh.material[index] = material;
+            mesh.material = mesh.material; // 触发更新
+
+            if (percent === 100 && loadingOverlay) {
+              loadingOverlay.classList.add('hide');
+              isTransitioning = false;
+            }
+          },
+          undefined,
+          (err) => {
+            console.error(`纹理加载失败: ${url}`, err);
+            loadedCount++; // 计数防止卡死
+          }
+        );
+      });
+      return mesh;
+    }
 
     let currentIndex = 0;
     let panoramaMesh = createPanorama(panoramaSets[0].faces);
     scene.add(panoramaMesh);
-    document.getElementById('loading').classList.add('hide');
 
-    // ==========================================
-    // 4. 交互控制（鼠标拖拽 + 滚轮缩放FOV）
-    // ==========================================
-    let isUserInteracting = false;
-    let pointerDownX = 0, pointerDownY = 0;
-    let lon = 0, lat = 0;
-    let targetLon = 0, targetLat = 0;
-    let fov = 75;
-    let targetFov = 75;
+    // ---------- 4. 交互控制 ----------
+    let isUserInteracting = false, pointerDownX = 0, pointerDownY = 0;
+    let lon = 0, lat = 0, targetLon = 0, targetLat = 0;
+    let fov = 75, targetFov = 75;
 
     function onPointerDown(event) {
       isUserInteracting = true;
       const clientX = event.clientX || event.touches[0].clientX;
       const clientY = event.clientY || event.touches[0].clientY;
-      pointerDownX = clientX;
-      pointerDownY = clientY;
+      pointerDownX = clientX; pointerDownY = clientY;
       if (useGyro) suspendGyro();
     }
-
     function onPointerMove(event) {
       if (!isUserInteracting) return;
       const clientX = event.clientX || event.touches[0].clientX;
       const clientY = event.clientY || event.touches[0].clientY;
-      const deltaX = clientX - pointerDownX;
-      const deltaY = clientY - pointerDownY;
-
-      targetLon = lon + deltaX * 0.15;
-      targetLat = lat - deltaY * 0.15;
+      targetLon = lon + (clientX - pointerDownX) * 0.15;
+      targetLat = lat - (clientY - pointerDownY) * 0.15;
       targetLat = Math.max(-85, Math.min(85, targetLat));
     }
-
-    function onPointerUp() {
-      isUserInteracting = false;
-    }
-
+    function onPointerUp() { isUserInteracting = false; }
     function onWheel(event) {
       event.preventDefault();
-      const delta = event.deltaY > 0 ? 2 : -2;
-      targetFov = fov + delta;
-      targetFov = Math.max(30, Math.min(110, targetFov));
+      targetFov = Math.max(30, Math.min(110, fov + (event.deltaY > 0 ? 2 : -2)));
     }
 
     renderer.domElement.addEventListener('touchstart', onPointerDown, { passive: false });
@@ -186,12 +226,8 @@ function createPanorama(faceUrls) {
     renderer.domElement.addEventListener('mouseup', onPointerUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
 
-    // ==========================================
-    // 5. 陀螺仪
-    // ==========================================
-    let useGyro = false;
-    let initialOrientation = null;
-
+    // ---------- 5. 陀螺仪 ----------
+    let useGyro = false, initialOrientation = null;
     function enableGyro() {
       if (typeof DeviceOrientationEvent !== 'undefined') {
         if (DeviceOrientationEvent.requestPermission) {
@@ -199,89 +235,69 @@ function createPanorama(faceUrls) {
           btn.classList.add('show');
           btn.addEventListener('click', async () => {
             const permission = await DeviceOrientationEvent.requestPermission();
-            if (permission === 'granted') {
-              startGyro();
-              btn.classList.remove('show');
-            }
+            if (permission === 'granted') { startGyro(); btn.classList.remove('show'); }
           });
-        } else {
-          startGyro();
-        }
+        } else { startGyro(); }
       }
     }
-
     function startGyro() {
       window.addEventListener('deviceorientation', onDeviceOrientation, true);
       useGyro = true;
       document.getElementById('gyroTip').classList.add('show');
     }
-
     function suspendGyro() {
       useGyro = false;
       document.getElementById('gyroTip').classList.remove('show');
     }
-
     function onDeviceOrientation(event) {
       if (!useGyro) return;
-      const beta = event.beta || 0;
-      const gamma = event.gamma || 0;
-
-      if (initialOrientation === null) {
-        initialOrientation = { beta, gamma };
-      }
-
+      const beta = event.beta || 0, gamma = event.gamma || 0;
+      if (!initialOrientation) initialOrientation = { beta, gamma };
       targetLon = (gamma - initialOrientation.gamma) * 1.5;
       targetLat = (beta - initialOrientation.beta) * 1.5;
       targetLat = Math.max(-85, Math.min(85, targetLat));
-
       lon = targetLon;
       lat = targetLat;
     }
-
     enableGyro();
 
-    // ==========================================
-    // 6. 场景切换
-    // ==========================================
+    // ---------- 6. 场景切换 ----------
     document.querySelectorAll('.scene-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const index = parseInt(btn.dataset.scene);
-        if (index === currentIndex) return;
+        if (index === currentIndex || isTransitioning) return;
+        isTransitioning = true;
 
-        // 移除旧立方体，创建新立方体
+        loadingOverlay.classList.remove('hide');
+        if (loadingText) loadingText.textContent = '加载中... 0%';
+        if (progressFill) progressFill.style.width = '0%';
+
+        const newMesh = createPanorama(panoramaSets[index].faces);
         scene.remove(panoramaMesh);
-        panoramaMesh = createPanorama(panoramaSets[index].faces);
-        scene.add(panoramaMesh);
+        scene.add(newMesh);
+        panoramaMesh = newMesh;
 
         document.querySelectorAll('.scene-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentIndex = index;
 
-        // 重置视角
-        lon = 0; lat = 0;
-        targetLon = 0; targetLat = 0;
+        lon = 0; lat = 0; targetLon = 0; targetLat = 0;
       });
     });
 
-    // ==========================================
-    // 7. 窗口大小调整
-    // ==========================================
+    // ---------- 7. 窗口调整 ----------
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // ==========================================
-    // 8. 动画循环（平滑插值）
-    // ==========================================
+    // ---------- 8. 动画循环 ----------
     function animate() {
       requestAnimationFrame(animate);
-
       lon += (targetLon - lon) * 0.1;
       lat += (targetLat - lat) * 0.1;
       fov += (targetFov - fov) * 0.15;
-
       const phi = THREE.MathUtils.degToRad(90 - lat);
       const theta = THREE.MathUtils.degToRad(lon);
       camera.lookAt(
@@ -289,13 +305,10 @@ function createPanorama(faceUrls) {
         Math.cos(phi),
         Math.sin(phi) * Math.sin(theta)
       );
-
       camera.fov = fov;
       camera.updateProjectionMatrix();
-
       renderer.render(scene, camera);
     }
-
     animate();
   </script>
 </body>
